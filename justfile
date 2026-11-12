@@ -4,7 +4,7 @@ default:
 
 # 构建二进制, 运行时使用本机已安装的 llama.cpp.
 build:
-    go build -o dist/qwen-asr ./cmd/qwen-asr
+    go build -buildvcs=false -o dist/qwen-asr ./cmd/qwen-asr
 
 # 直接运行, 参数透传, 例如 just run -i a.mp4 --format srt.
 run *args:

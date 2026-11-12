@@ -75,6 +75,7 @@ def build(goos, goarch, display_version, binary_path):
         [
             "go",
             "build",
+            "-buildvcs=false",
             "-trimpath",
             "-ldflags",
             f"-s -w -X {module}/internal/buildinfo.version={display_version}",

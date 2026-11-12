@@ -134,7 +134,7 @@ jobs:
 
       - name: 构建
         shell: bash
-        run: go build ./...
+        run: go build -buildvcs=false ./...
 
       - name: 静态检查
         shell: bash
@@ -231,7 +231,7 @@ jobs:
           fetch-tags: true
 
       - name: 下载全部构建产物
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with:
           path: release-artifacts
           merge-multiple: true
@@ -346,12 +346,14 @@ jobs:
 
           title="qwen-asr v$VERSION"
           prerelease=()
-          if [[ "$VERSION" == *-* ]]; then
+          # 只认主版本之后的 - 段 (SemVer 预发布), 不要用 *-*, 否则 release-1.2.3 这类 tag 会误判.
+          if [[ "$VERSION" =~ ^[vV]?[0-9]+([.][0-9]+)*[-] ]]; then
             prerelease=(--prerelease)
           fi
 
           if gh release view "$TAG_NAME" >/dev/null 2>&1; then
             gh release edit "$TAG_NAME" \
+              --verify-tag \
               --title "$title" \
               --notes-file release-notes.md \
               "${prerelease[@]}"
@@ -364,3 +366,142 @@ jobs:
               "${prerelease[@]}" \
               "${assets[@]}"
           fi
+
+  prerelease:
+    name: 更新滚动预发布
+    needs: [version, test, build]
+    # 只处理分支 push: tag push 走正式发布, PR 的 token 只读;
+    # 未填 tag 的手动触发按 input 说明只跑 CI, 不覆盖公共预发布.
+    if: needs.version.outputs.is_release != 'true' && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      # 这个 job 不检出代码, gh 推断不出仓库, 必须显式指定.
+      GH_REPO: ${{ github.repository }}
+    # 所有分支共用同一个 release, 必须串行.
+    concurrency:
+      group: rolling-prerelease
+      cancel-in-progress: false
+    steps:
+      - name: 确认提交仍是最新
+        id: freshness
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 用 commit 查"以它为 HEAD 的分支", 免得把分支名拼进 url.
+          head_branches="$(gh api "repos/$GITHUB_REPOSITORY/commits/$COMMIT/branches-where-head" --jq '.[].name')"
+
+          is_latest=false
+          if grep -Fxq "$BRANCH" <<< "$head_branches"; then
+            is_latest=true
+          else
+            echo "::notice::$BRANCH 的 HEAD 已不在 $COMMIT, 本次预发布让给更新的运行"
+          fi
+          echo "is_latest=$is_latest" >> "$GITHUB_OUTPUT"
+
+      - name: 下载构建产物
+        if: steps.freshness.outputs.is_latest == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          path: prerelease-artifacts
+          merge-multiple: true
+
+      - name: 生成校验和
+        if: steps.freshness.outputs.is_latest == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          cd prerelease-artifacts
+          archives=(qwen-asr-*.tar.gz qwen-asr-*.zip)
+
+          # 六个平台各一个归档, 数量不符说明有平台漏传.
+          if (( ${#archives[@]} != 6 )); then
+            echo "预期 6 个归档, 实际找到 ${#archives[@]} 个" >&2
+            ls -la >&2
+            exit 1
+          fi
+
+          sha256sum "${archives[@]}" > SHA256SUMS
+
+      - name: 更新滚动预发布
+        if: steps.freshness.outputs.is_latest == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+          BUILD_VERSION: ${{ needs.version.outputs.build_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          # 不带 TAG_PREFIX 前缀, 且保持 lightweight: 版本解析按前缀过滤 tag,
+          # 带上前缀会让它被当成版本号. 这个 tag 只在首次创建时落位, 之后不再移动.
+          tag="dev-latest"
+          assets=(
+            prerelease-artifacts/qwen-asr-*.tar.gz
+            prerelease-artifacts/qwen-asr-*.zip
+            prerelease-artifacts/SHA256SUMS
+          )
+
+          if (( ${#assets[@]} != 7 )); then
+            echo "预期 6 个归档加 1 个校验文件, 实际 ${#assets[@]} 个" >&2
+            exit 1
+          fi
+
+          {
+            echo "分支 \`$BRANCH\` 最新一次 push 的滚动预发布, 产物会被后续 push 覆盖."
+            echo
+            echo "- 提交: [\`${COMMIT:0:7}\`](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${COMMIT})"
+            echo "- 构建版本: \`v$BUILD_VERSION\`"
+            echo
+            echo "这个 release 的 tag 固定在首次创建时的提交, 页面上的 Commit 链接不代表本次构建,"
+            echo "最新的产物与提交以上面的内容为准."
+          } > prerelease-notes.md
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            # release 已存在: 只更新说明与产物, tag 与 release 本身保持不动.
+            gh release edit "$tag" \
+              --title "qwen-asr 最新构建 v$BUILD_VERSION" \
+              --notes-file prerelease-notes.md \
+              --prerelease \
+              --latest=false
+          else
+            # 首次创建: 清掉可能残留的旧 tag, 让 tag 落在本次提交上.
+            if gh api "repos/$GITHUB_REPOSITORY/git/refs/tags/$tag" >/dev/null 2>&1; then
+              gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$tag"
+            fi
+            gh release create "$tag" \
+              --target "$COMMIT" \
+              --title "qwen-asr 最新构建 v$BUILD_VERSION" \
+              --notes-file prerelease-notes.md \
+              --prerelease \
+              --latest=false
+          fi
+
+          gh release upload "$tag" "${assets[@]}" --clobber
+
+          # 产物名带构建版本号, 每轮都不同, 不清理会越积越多;
+          # 先传新的再删旧的, 上传失败时仍能下载到上一轮的完整产物.
+          current_names=()
+          for asset_path in "${assets[@]}"; do
+            current_names+=("$(basename "$asset_path")")
+          done
+          while IFS= read -r asset; do
+            [[ -n "$asset" ]] || continue
+            keep=false
+            for name in "${current_names[@]}"; do
+              if [[ "$asset" == "$name" ]]; then
+                keep=true
+                break
+              fi
+            done
+            if [[ "$keep" == "false" ]]; then
+              gh release delete-asset "$tag" "$asset" --yes
+            fi
+          done < <(gh release view "$tag" --json assets --jq '.assets[].name')
