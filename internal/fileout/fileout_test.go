@@ -155,3 +155,80 @@ func TestCollectInputsMissing(t *testing.T) {
 		t.Fatal("不存在的输入应当报错")
 	}
 }
+
+func TestCollectInputsAllMultipleFiles(t *testing.T) {
+	dir := t.TempDir()
+	var paths []string
+	for _, name := range []string{"a.wav", "b.mp3"} {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatalf("无法创建 %s: %v", name, err)
+		}
+		paths = append(paths, p)
+	}
+
+	got, errs := CollectInputsAll(paths)
+	if len(errs) != 0 {
+		t.Fatalf("不应有错误: %v", errs)
+	}
+	if len(got) != 2 {
+		t.Fatalf("应收集 2 个文件, 实际 %d: %v", len(got), got)
+	}
+	// 保持用户给出的顺序, 便于预期处理次序.
+	if got[0] != paths[0] || got[1] != paths[1] {
+		t.Errorf("顺序应与输入一致, 实际 %v", got)
+	}
+}
+
+// 同一个文件用不同写法重复给出时只处理一次, 免得重复转录并覆盖输出.
+func TestCollectInputsAllDedupes(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "a.wav")
+	if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+		t.Fatalf("无法创建: %v", err)
+	}
+
+	got, errs := CollectInputsAll([]string{p, p, filepath.Join(dir, ".", "a.wav")})
+	if len(errs) != 0 {
+		t.Fatalf("不应有错误: %v", errs)
+	}
+	if len(got) != 1 {
+		t.Errorf("重复输入应去重为一个, 实际 %d: %v", len(got), got)
+	}
+}
+
+// 一个输入出错不应该影响其余输入, 否则通配符里有个坏文件就全废了.
+func TestCollectInputsAllContinuesAfterError(t *testing.T) {
+	dir := t.TempDir()
+	good := filepath.Join(dir, "a.wav")
+	if err := os.WriteFile(good, []byte("x"), 0o644); err != nil {
+		t.Fatalf("无法创建: %v", err)
+	}
+
+	got, errs := CollectInputsAll([]string{
+		filepath.Join(dir, "missing.wav"), good, filepath.Join(dir, "bad.txt"),
+	})
+	if len(errs) != 2 {
+		t.Errorf("应报告 2 个错误, 实际 %d: %v", len(errs), errs)
+	}
+	if len(got) != 1 || got[0] != good {
+		t.Errorf("应保留可处理的文件, 实际 %v", got)
+	}
+}
+
+func TestCollectInputsAllDirectory(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"a.wav", "b.flac", "c.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+			t.Fatalf("无法创建 %s: %v", name, err)
+		}
+	}
+
+	got, errs := CollectInputsAll([]string{dir})
+	if len(errs) != 0 {
+		t.Fatalf("不应有错误: %v", errs)
+	}
+	if len(got) != 2 {
+		t.Errorf("目录里应收集 2 个音频文件, 实际 %d: %v", len(got), got)
+	}
+}

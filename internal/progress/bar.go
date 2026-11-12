@@ -44,6 +44,10 @@ type Report struct {
 	Seconds float64
 	// TotalSeconds 是本次要处理的音频总时长, 0 表示未知.
 	TotalSeconds float64
+	// File 是当前处理到第几个文件, 从 1 开始. 0 表示不显示文件进度.
+	File int
+	// TotalFiles 是文件总数.
+	TotalFiles int
 }
 
 // Bar 是一个可原地刷新的进度条.
@@ -124,6 +128,22 @@ func (b *Bar) Set(r Report) {
 	b.draw()
 }
 
+// Reset 清掉当前进度与其计时, 用于开始处理下一个任务.
+//
+// 不重置的话, 第二个文件会继承第一个文件的耗时, 倍速和剩余时间都会失真.
+func (b *Bar) Reset() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.closed {
+		return
+	}
+	b.report = Report{}
+	b.start = time.Time{}
+	b.lastRender = time.Time{}
+	b.lastLine = time.Time{}
+}
+
 // Close 擦掉进度条, 不再输出任何内容. 重复调用是安全的.
 func (b *Bar) Close() {
 	b.mu.Lock()
@@ -197,6 +217,11 @@ func (b *Bar) render() string {
 	// 分段个数单独列出: 时长百分比看不出还剩多少段要跑.
 	fmt.Fprintf(&sb, "  %d/%d 段", b.report.Segments, b.report.TotalSegments)
 
+	// 批量处理时补上文件进度, 否则看不出整体还要跑几个文件.
+	if b.report.TotalFiles > 1 && b.report.File > 0 {
+		fmt.Fprintf(&sb, "  文件 %d/%d", b.report.File, b.report.TotalFiles)
+	}
+
 	elapsed := time.Since(b.start)
 	sb.WriteString("  ")
 	sb.WriteString(formatElapsed(elapsed))
@@ -242,6 +267,9 @@ func (b *Bar) maybeLine() {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "  进度 %.1f%%  %d/%d 段  %s",
 		b.ratio()*100, b.report.Segments, b.report.TotalSegments, formatElapsed(elapsed))
+	if b.report.TotalFiles > 1 && b.report.File > 0 {
+		fmt.Fprintf(&sb, "  文件 %d/%d", b.report.File, b.report.TotalFiles)
+	}
 	if speed := b.speed(elapsed); speed > 0 {
 		fmt.Fprintf(&sb, "  剩余 %s  %.1fx", formatETA(b.remaining(speed)), speed)
 	}

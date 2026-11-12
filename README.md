@@ -38,6 +38,9 @@ qwen-asr -i 录音.mp3
 # 指定模型与输出格式
 qwen-asr -i 视频.mp4 --model 1.7b --format txt,srt -o ./字幕
 
+# 一次给多个文件, 也可以用通配符, 会按顺序逐个转录
+qwen-asr *.mp4
+
 # 批量处理目录
 qwen-asr -i ./音频目录 -j 8
 
@@ -61,7 +64,7 @@ qwen-asr doctor
 
 | 选项 | 说明 |
 | --- | --- |
-| `-i, --input` | 输入文件或目录 |
+| `-i, --input` | 输入文件或目录, 可重复或用多个位置参数 |
 | `-o, --output` | 输出路径, 默认与输入同目录 |
 | `--format` | `txt,srt,json` 逗号分隔, 默认 `srt`; 显式选择 `txt` 且不指定 `-o` 时打印到 stdout |
 | `-j, --jobs` | 并发转录段数, 默认 4 |

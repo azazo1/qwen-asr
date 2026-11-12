@@ -69,7 +69,7 @@ func printMainUsage(w io.Writer) {
   %s version                  显示版本
 
 常用选项:
-  -i, --input     输入文件或目录 (支持 %s)
+  -i, --input     输入文件或目录, 可给多个或直接写位置参数 (支持 %s)
   -o, --output    输出路径, 默认与输入同目录
       --format    输出格式, 逗号分隔: txt,srt,json (默认 srt)
   -j, --jobs      并发转录的分段数 (默认 4)
@@ -84,7 +84,7 @@ func printMainUsage(w io.Writer) {
 
 // transcribeFlags 收集转录相关参数.
 type transcribeFlags struct {
-	input        string
+	inputs       []string
 	output       string
 	format       string
 	jobs         int
@@ -110,7 +110,8 @@ func parseTranscribeFlags(args []string, stderr io.Writer) (*transcribeFlags, er
 
 	f := &transcribeFlags{}
 
-	stringVar(fs, &f.input, "输入文件或目录", "i", "input")
+	fs.Var(&inputList{&f.inputs}, "i", "输入文件或目录, 可以重复或用多个位置参数")
+	fs.Var(&inputList{&f.inputs}, "input", "输入文件或目录, 可以重复或用多个位置参数")
 	stringVar(fs, &f.output, "输出路径", "o", "output")
 	stringVar(fs, &f.format, "输出格式, 逗号分隔: txt,srt,json (默认 srt)", "format")
 	intVar(fs, &f.jobs, "并发转录的分段数", "j", "jobs")
@@ -136,11 +137,8 @@ func parseTranscribeFlags(args []string, stderr io.Writer) (*transcribeFlags, er
 		return nil, err
 	}
 
-	// 允许把输入文件作为位置参数, 更方便直接把文件拖进来.
-	// 选项写在位置参数之后也能被正确解析, 见 parseWithPositionals.
-	if f.input == "" && len(positionals) > 0 {
-		f.input = positionals[0]
-	}
+	// 位置参数也都是输入, 方便直接拖多个文件或用 shell 通配符.
+	f.inputs = append(f.inputs, positionals...)
 
 	return f, nil
 }
@@ -151,7 +149,7 @@ func runTranscribe(ctx context.Context, args []string, stdin io.Reader, stdout, 
 		return ExitUsage
 	}
 
-	if f.input == "" {
+	if len(f.inputs) == 0 {
 		fmt.Fprintf(stderr, "缺少输入: 请用 -i 指定要转录的文件或目录\n\n")
 		printMainUsage(stderr)
 		return ExitUsage
@@ -237,44 +235,53 @@ func runTranscribe(ctx context.Context, args []string, stdin io.Reader, stdout, 
 		defer closeSpeech()
 	}
 
-	tr := transcribe.New(session, transcribe.Options{
-		Jobs:         f.jobs,
-		ChunkSeconds: f.chunkSeconds,
-		Language:     f.language,
-		KeepTemp:     f.keepTemp,
-		TempDir:      dirs.TempDir(),
-		Logger:       logger,
-		Toolchain:    toolchain,
-		Speech:       speech,
-		Progress: func(r transcribe.ProgressReport) {
-			bar.Set(progress.Report{
-				Segments:      r.Segments,
-				TotalSegments: r.TotalSegments,
-				Failed:        r.Failed,
-				Seconds:       r.Seconds,
-				TotalSeconds:  r.TotalSeconds,
-			})
-		},
-	})
-
 	formats, err := fileout.ParseFormats(f.format)
 	if err != nil {
 		fmt.Fprintf(stderr, "错误: %v\n", err)
 		return ExitUsage
 	}
 
-	inputs, err := fileout.CollectInputs(f.input)
-	if err != nil {
+	inputs, inputErrs := fileout.CollectInputsAll(f.inputs)
+	for _, err := range inputErrs {
 		fmt.Fprintf(stderr, "错误: %v\n", err)
-		return ExitFailure
 	}
 	if len(inputs) == 0 {
-		fmt.Fprintf(stderr, "错误: 在 %s 里没有找到可处理的文件\n", f.input)
+		fmt.Fprintf(stderr, "错误: 没有找到可处理的文件\n")
 		return ExitFailure
+	}
+	if len(inputs) > 1 && outputIsFile(f.output) {
+		fmt.Fprintf(stderr, "错误: 处理 %d 个文件时 -o 不能指向单个文件 (%s), 请改用目录\n",
+			len(inputs), f.output)
+		return ExitUsage
 	}
 
 	exitCode := ExitOK
-	for _, input := range inputs {
+	for i, input := range inputs {
+		// 每个文件从头计时, 否则后续文件会继承前面文件的耗时, 倍速与剩余时间都失真.
+		bar.Reset()
+		fileIndex := i + 1
+		tr := transcribe.New(session, transcribe.Options{
+			Jobs:         f.jobs,
+			ChunkSeconds: f.chunkSeconds,
+			Language:     f.language,
+			KeepTemp:     f.keepTemp,
+			TempDir:      dirs.TempDir(),
+			Logger:       logger,
+			Toolchain:    toolchain,
+			Speech:       speech,
+			Progress: func(r transcribe.ProgressReport) {
+				bar.Set(progress.Report{
+					Segments:      r.Segments,
+					TotalSegments: r.TotalSegments,
+					Failed:        r.Failed,
+					Seconds:       r.Seconds,
+					TotalSeconds:  r.TotalSeconds,
+					File:          fileIndex,
+					TotalFiles:    len(inputs),
+				})
+			},
+		})
+
 		result, err := tr.Run(ctx, input)
 		if err != nil {
 			// 取消是用户行为, 不再逐个报错.
@@ -299,6 +306,20 @@ func runTranscribe(ctx context.Context, args []string, stdin io.Reader, stdout, 
 	}
 
 	return exitCode
+}
+
+// outputIsFile 判断 -o 指向的是单个文件而不是目录.
+//
+// 只有多个输入时才有意义: 单个文件输出无法容纳多个结果,
+// 这种情况要求用户改成目录, 而不是悄悄覆盖或只写其中一个.
+func outputIsFile(output string) bool {
+	if output == "" || output == "-" {
+		return false
+	}
+	if info, err := os.Stat(output); err == nil {
+		return !info.IsDir()
+	}
+	return !strings.HasSuffix(output, string(os.PathSeparator)) && !strings.HasSuffix(output, "/")
 }
 
 // writeOutputs 按要求的格式写出结果.

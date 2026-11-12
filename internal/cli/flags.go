@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/azazo1/qwen-asr/internal/subtitle"
 	"github.com/azazo1/qwen-asr/internal/transcribe"
@@ -32,9 +33,38 @@ func parseWithPositionals(fs *flag.FlagSet, args []string) ([]string, error) {
 	}
 }
 
-// 下面几个 helper 让同一个参数可以注册多个名字.
+// stringVar 让同一个参数可以注册多个名字.
 //
 // flag 包对同一变量多次 Var 是安全的, 解析时任意一个名字都会写入同一处.
+
+// inputList 收集可重复出现的输入参数.
+//
+// 每个 --input 或位置参数都会追加, 因此 qwen-asr a.mp4 b.mp4 与
+// qwen-asr -i a.mp4 -i b.mp4 等价, 也会把 shell 通配符展开的结果全部收下.
+type inputList struct {
+	dst *[]string
+}
+
+// String 实现 flag.Value.
+func (l inputList) String() string {
+	if l.dst == nil {
+		return ""
+	}
+	return strings.Join(*l.dst, ",")
+}
+
+// Set 追加一个输入.
+func (l inputList) Set(v string) error {
+	// 允许用逗号一次给多个, 与 --format 的风格保持一致.
+	for _, part := range strings.Split(v, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		*l.dst = append(*l.dst, part)
+	}
+	return nil
+}
 
 func stringVar(fs *flag.FlagSet, p *string, usage string, names ...string) {
 	for _, name := range names {

@@ -273,3 +273,53 @@ func TestFormatClock(t *testing.T) {
 		}
 	}
 }
+
+// 批量处理时要显示文件进度, 否则看不出整体还剩几个文件.
+func TestFileProgressShown(t *testing.T) {
+	var buf bytes.Buffer
+	bar := New(&buf, true)
+	r := report(1, 4, 5, 20)
+	r.File, r.TotalFiles = 2, 5
+	bar.Set(r)
+
+	if !strings.Contains(buf.String(), "文件 2/5") {
+		t.Errorf("应显示文件进度, 实际 %q", buf.String())
+	}
+}
+
+// 只处理一个文件时不显示文件进度, 免得出现无意义的 1/1.
+func TestFileProgressHiddenForSingleFile(t *testing.T) {
+	var buf bytes.Buffer
+	bar := New(&buf, true)
+	r := report(1, 4, 5, 20)
+	r.File, r.TotalFiles = 1, 1
+	bar.Set(r)
+
+	if strings.Contains(buf.String(), "文件") {
+		t.Errorf("单文件不应显示文件进度, 实际 %q", buf.String())
+	}
+}
+
+// 开始下一个文件时重置计时与进度, 否则倍速会被上一个文件的耗时拉偏.
+func TestResetClearsTimingAndProgress(t *testing.T) {
+	var buf bytes.Buffer
+	bar := New(&buf, true)
+
+	bar.Set(report(4, 4, 20, 20))
+	age(bar, 10*time.Second)
+	bar.Reset()
+
+	if !bar.start.IsZero() {
+		t.Errorf("Reset 后开始时间应清零")
+	}
+
+	buf.Reset()
+	bar.Set(report(1, 4, 5, 20))
+	out := buf.String()
+	if strings.Contains(out, "x ") {
+		t.Errorf("重置后不应沿用旧速度, 实际 %q", out)
+	}
+	if !strings.Contains(out, "剩余 --") {
+		t.Errorf("重置后数据不足, 剩余时间应显示占位, 实际 %q", out)
+	}
+}

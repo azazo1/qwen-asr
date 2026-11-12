@@ -128,3 +128,38 @@ func CollectInputs(input string) ([]string, error) {
 
 	return out, nil
 }
+
+// CollectInputsAll 展开多个输入, 按给定顺序去重后返回.
+//
+// 单个输入出错不会中断其余输入: 例如同时给了一个不存在的文件和一个目录,
+// 目录里的文件仍应处理. 出错信息汇总后与结果一起返回, 由调用方决定如何呈现.
+// 同一个文件通过不同写法重复给出时只处理一次, 避免重复转录和互相覆盖输出.
+func CollectInputsAll(inputs []string) ([]string, []error) {
+	var (
+		out  []string
+		errs []error
+		seen = map[string]bool{}
+	)
+
+	for _, input := range inputs {
+		paths, err := CollectInputs(input)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		for _, path := range paths {
+			// 用绝对路径判重, 这样 ./a.wav 与 a.wav 视为同一个文件.
+			key, keyErr := filepath.Abs(path)
+			if keyErr != nil {
+				key = path
+			}
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, path)
+		}
+	}
+
+	return out, errs
+}
