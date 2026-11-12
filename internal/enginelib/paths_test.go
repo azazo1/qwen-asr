@@ -74,8 +74,9 @@ func TestHasRequiredLibsAcceptsVersionedNames(t *testing.T) {
 }
 
 func TestCandidatesFromServer(t *testing.T) {
-	got := CandidatesFromServer("/opt/llama/bin/llama-server")
-	want := []string{"/opt/llama/lib", "/opt/llama/bin"}
+	root := t.TempDir()
+	got := CandidatesFromServer(filepath.Join(root, "bin", "llama-server"))
+	want := []string{filepath.Join(root, "lib"), filepath.Join(root, "bin")}
 
 	if len(got) != len(want) {
 		t.Fatalf("得到 %v, 预期 %v", got, want)
