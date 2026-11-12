@@ -70,6 +70,9 @@ qwen-asr doctor
 | `--language` | 固定识别语言, 例如 `Chinese`, 默认自动识别 |
 | `--data-dir` | 数据目录, 存放模型和临时文件 |
 | `--llama-lib` | 指定 llama.cpp 库目录, 优先于系统自动探测 |
+| `--vad` | Silero VAD 模型 `.onnx` 路径, 指定后按语音区间切分 |
+| `--onnx-lib` | onnxruntime 动态库文件或目录 |
+| `--vad-threshold` | VAD 语音概率阈值, 默认 0.5 |
 
 ## 环境变量
 
@@ -79,6 +82,8 @@ qwen-asr doctor
 | `QWEN_ASR_LLAMA_LIB` | llama.cpp 库目录 |
 | `QWEN_ASR_DOWNLOAD_SOURCE` | `modelscope` 或 `hf` |
 | `QWEN_ASR_LLAMA_LOG` | 设为非空时打开 llama.cpp 自身的日志, 便于排查推理问题 |
+| `QWEN_ASR_VAD_MODEL` | Silero VAD 模型路径 |
+| `QWEN_ASR_ONNX_LIB` | onnxruntime 动态库文件或目录 |
 
 ## 数据目录
 
@@ -95,6 +100,25 @@ qwen-asr doctor
 显式指定的库目录优先, 加载失败时直接报错. 未指定时, 检查 `llama-server` 或 `llama-cli` 附近的库目录和各平台常见安装目录, 并实际加载符号进行检查.
 
 没有可用引擎时立即退出并提示安装, 不会下载或释放 llama.cpp, 也不会进入模型下载流程.
+
+## 语音检测 (VAD)
+
+默认按音量阈值切分. 指定 [Silero VAD](https://github.com/snakers4/silero-vad) 模型后, 改用模型判断哪些区间有人声, 跳过静音部分, 减少无意义推理, 语音边界也更准确:
+
+```shell
+qwen-asr -i 录音.mp3 --vad ~/models/silero_vad.onnx --onnx-lib /opt/homebrew/lib
+```
+
+需要两样外部资源, 都不随本工具分发:
+
+- **Silero VAD 的 ONNX 模型** (v5 或更新), 放哪里都可以, 用 `--vad` 指定; 也可以放在数据目录的 `models/silero_vad.onnx` 自动识别.
+- **ONNX Runtime 1.28 动态库**, 通过 `--onnx-lib` 指定文件或目录; 未指定时探测系统常见目录.
+
+推理走纯 Go 的 purego 绑定, 不需要 cgo. 显式给出 `--vad` 时任何加载失败都会直接报错, 不会悄悄退回能量分段. 自动探测到模型但缺 onnxruntime 时只警告并回退.
+
+VAD 只决定"哪几段是语音", 字幕时间戳仍取自原音频, 不会因为跳过静音而偏移. 它不提供词级对齐.
+
+实测例: 5 秒音频首尾各含 1 秒静音时, 不启用 VAD 得到 `00:00:00,000 --> 00:00:05,033`, 启用后得到 `00:00:01,056 --> 00:00:04,064`, 文本一致.
 
 ## 已知限制
 

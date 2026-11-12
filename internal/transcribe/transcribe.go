@@ -34,6 +34,15 @@ type Options struct {
 	Logger *slog.Logger
 	// Toolchain 是本机可用的外部音频工具.
 	Toolchain audio.Toolchain
+	// Speech 是可选的语音检测器. 为 nil 时按能量阈值分段.
+	Speech SpeechDetector
+}
+
+// SpeechDetector 检测音频中的语音区间, 时间相对传入样本的起点, 单位秒.
+//
+// 传入的样本固定为 audio.SampleRate, 实现方不必再做重采样.
+type SpeechDetector interface {
+	Detect(ctx context.Context, samples []float32) ([]audio.SpeechSpan, error)
 }
 
 // Segment 是一段转录结果.
@@ -131,7 +140,7 @@ func (t *Transcriber) Run(ctx context.Context, input string) (Result, error) {
 	result.Duration = float64(len(samples)) / float64(rate)
 	log.Debug("音频已载入", "samples", len(samples), "seconds", result.Duration, "rate", rate)
 
-	clips, err := audio.Segment(samples, rate, audio.SegmentOptions{MaxSeconds: t.opts.ChunkSeconds})
+	clips, err := t.planClips(ctx, samples, rate, log)
 	if err != nil {
 		return result, err
 	}
@@ -150,6 +159,30 @@ func (t *Transcriber) Run(ctx context.Context, input string) (Result, error) {
 		"elapsed", time.Since(start).Round(time.Millisecond))
 
 	return result, nil
+}
+
+// planClips 决定音频如何切段: 启用语音检测时按检测到的区间切, 否则按能量阈值切.
+func (t *Transcriber) planClips(ctx context.Context, samples []float32, rate int, log *slog.Logger) ([]audio.Clip, error) {
+	if t.opts.Speech == nil {
+		return audio.Segment(samples, rate, audio.SegmentOptions{MaxSeconds: t.opts.ChunkSeconds})
+	}
+
+	// VAD 模型固定要求 16 kHz, 模型采样率不是时就临时重采样一份.
+	detectSamples := samples
+	if rate != audio.SampleRate {
+		detectSamples = audio.Resample(samples, rate, audio.SampleRate)
+	}
+
+	start := time.Now()
+	spans, err := t.opts.Speech.Detect(ctx, detectSamples)
+	if err != nil {
+		return nil, fmt.Errorf("语音检测失败: %w", err)
+	}
+	log.Info("语音检测完成",
+		"spans", len(spans),
+		"elapsed", time.Since(start).Round(time.Millisecond))
+
+	return audio.SegmentBySpeech(samples, rate, spans, t.opts.ChunkSeconds)
 }
 
 // loadSamples 把任意支持的输入读成目标采样率的单声道样本.

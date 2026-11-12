@@ -74,6 +74,7 @@ func printMainUsage(w io.Writer) {
   -j, --jobs      并发转录的分段数 (默认 4)
       --model     0.6b / 1.7b / 本地 gguf 路径 (默认 %s)
       --language  固定识别语言, 例如 Chinese, 默认自动识别
+      --vad       Silero VAD 模型 (.onnx), 指定后按语音区间切分
 
 运行 %s models -h 或 %s doctor -h 查看子命令细节.
 `, config.AppName, config.AppName, config.AppName, config.AppName, config.AppName,
@@ -91,6 +92,9 @@ type transcribeFlags struct {
 	language     string
 	dataDir      string
 	llamaLib     string
+	vadModel     string
+	onnxLib      string
+	vadThreshold float64
 	threads      int
 	keepTemp     bool
 	verbose      bool
@@ -114,6 +118,9 @@ func parseTranscribeFlags(args []string, stderr io.Writer) (*transcribeFlags, er
 	stringVar(fs, &f.language, "固定识别语言", "language")
 	stringVar(fs, &f.dataDir, "数据目录", "data-dir")
 	stringVar(fs, &f.llamaLib, "llama.cpp 库目录", "llama-lib")
+	stringVar(fs, &f.vadModel, "Silero VAD 模型 (.onnx), 指定后启用语音检测", "vad")
+	stringVar(fs, &f.onnxLib, "onnxruntime 动态库路径", "onnx-lib")
+	floatVar(fs, &f.vadThreshold, "VAD 语音概率阈值, 0 表示默认 0.5", "vad-threshold")
 	intVar(fs, &f.threads, "CPU 线程数, 0 表示自动", "threads")
 	boolVar(fs, &f.keepTemp, "保留中间文件", "keep-temp")
 	boolVar(fs, &f.verbose, "输出调试日志", "v", "verbose")
@@ -217,6 +224,15 @@ func runTranscribe(ctx context.Context, args []string, stdin io.Reader, stdout, 
 		logger.Debug("未找到 ffmpeg, 视频与其他容器格式将不可用")
 	}
 
+	speech, closeSpeech, err := newSpeechDetector(f, dirs, logger)
+	if err != nil {
+		fmt.Fprintf(stderr, "错误: %v\n", err)
+		return ExitFailure
+	}
+	if closeSpeech != nil {
+		defer closeSpeech()
+	}
+
 	tr := transcribe.New(session, transcribe.Options{
 		Jobs:         f.jobs,
 		ChunkSeconds: f.chunkSeconds,
@@ -225,6 +241,7 @@ func runTranscribe(ctx context.Context, args []string, stdin io.Reader, stdout, 
 		TempDir:      dirs.TempDir(),
 		Logger:       logger,
 		Toolchain:    toolchain,
+		Speech:       speech,
 	})
 
 	formats, err := fileout.ParseFormats(f.format)

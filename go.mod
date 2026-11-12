@@ -3,6 +3,7 @@ module github.com/azazo1/qwen-asr
 go 1.26.0
 
 require (
+	github.com/getcharzp/onnxruntime_purego v1.28.0
 	github.com/hajimehoshi/go-mp3 v0.3.4
 	github.com/hybridgroup/yzma v1.32.0
 	github.com/mewkiz/flac v1.0.14
