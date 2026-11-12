@@ -25,10 +25,10 @@ const (
 
 // ParseFormats 解析输出格式列表.
 //
-// 空字符串返回默认的 txt; 重复项会被去重; 未知格式报错.
+// 空字符串返回默认的 srt; 重复项会被去重; 未知格式报错.
 func ParseFormats(raw string) ([]string, error) {
 	if strings.TrimSpace(raw) == "" {
-		return []string{FormatText}, nil
+		return []string{FormatSRT}, nil
 	}
 
 	allowed := map[string]bool{

@@ -13,7 +13,7 @@ func TestParseFormats(t *testing.T) {
 		want    []string
 		wantErr bool
 	}{
-		{"", []string{"txt"}, false},
+		{"", []string{"srt"}, false},
 		{"txt", []string{"txt"}, false},
 		{"txt,srt", []string{"txt", "srt"}, false},
 		{"TXT, SRT , json", []string{"txt", "srt", "json"}, false},

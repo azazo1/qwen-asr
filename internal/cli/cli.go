@@ -70,7 +70,7 @@ func printMainUsage(w io.Writer) {
 常用选项:
   -i, --input     输入文件或目录 (支持 %s)
   -o, --output    输出路径, 默认与输入同目录
-      --format    输出格式, 逗号分隔: txt,srt,json (默认 txt)
+      --format    输出格式, 逗号分隔: txt,srt,json (默认 srt)
   -j, --jobs      并发转录的分段数 (默认 4)
       --model     0.6b / 1.7b / 本地 gguf 路径 (默认 %s)
       --language  固定识别语言, 例如 Chinese, 默认自动识别
@@ -107,7 +107,7 @@ func parseTranscribeFlags(args []string, stderr io.Writer) (*transcribeFlags, er
 
 	stringVar(fs, &f.input, "输入文件或目录", "i", "input")
 	stringVar(fs, &f.output, "输出路径", "o", "output")
-	stringVar(fs, &f.format, "输出格式, 逗号分隔: txt,srt,json", "format")
+	stringVar(fs, &f.format, "输出格式, 逗号分隔: txt,srt,json (默认 srt)", "format")
 	intVar(fs, &f.jobs, "并发转录的分段数", "j", "jobs")
 	floatVar(fs, &f.chunkSeconds, "单段时长上限 (秒)", "chunk-seconds")
 	stringVar(fs, &f.model, "模型档位或 gguf 路径", "m", "model")

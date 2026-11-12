@@ -117,6 +117,7 @@ func (t *Transcriber) Run(ctx context.Context, input string) (Result, error) {
 
 	result := Result{Input: input}
 
+	log.Info("开始读取音频")
 	samples, err := t.loadSamples(ctx, input, log)
 	if err != nil {
 		return result, err
@@ -233,6 +234,19 @@ func (t *Transcriber) transcribeClips(ctx context.Context, clips []audio.Clip, l
 		errs []error
 	)
 
+	start := time.Now()
+	completed := 0
+	// 在 mu 保护下更新, 并发任务按实际完成数报告进度.
+	reportProgress := func() {
+		completed++
+		log.Info("转录进度",
+			"completed", completed,
+			"total", len(clips),
+			"percent", fmt.Sprintf("%.1f%%", 100*float64(completed)/float64(len(clips))),
+			"failed", len(errs),
+			"elapsed", time.Since(start).Round(time.Millisecond))
+	}
+
 	for i, clip := range clips {
 		wg.Add(1)
 		go func(idx int, c audio.Clip) {
@@ -259,12 +273,14 @@ func (t *Transcriber) transcribeClips(ctx context.Context, clips []audio.Clip, l
 				mu.Lock()
 				segments[idx] = Segment{Index: c.Index, Start: c.Start, End: c.End, Failed: true}
 				errs = append(errs, err)
+				reportProgress()
 				mu.Unlock()
 				return
 			}
 
 			mu.Lock()
 			segments[idx] = Segment{Index: c.Index, Start: c.Start, End: c.End, Text: text}
+			reportProgress()
 			mu.Unlock()
 		}(i, clip)
 	}
