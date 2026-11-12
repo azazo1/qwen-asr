@@ -246,7 +246,15 @@ func runTranscribe(ctx context.Context, args []string, stdin io.Reader, stdout, 
 		Logger:       logger,
 		Toolchain:    toolchain,
 		Speech:       speech,
-		Progress:     bar.Set,
+		Progress: func(r transcribe.ProgressReport) {
+			bar.Set(progress.Report{
+				Segments:      r.Segments,
+				TotalSegments: r.TotalSegments,
+				Failed:        r.Failed,
+				Seconds:       r.Seconds,
+				TotalSeconds:  r.TotalSeconds,
+			})
+		},
 	})
 
 	formats, err := fileout.ParseFormats(f.format)

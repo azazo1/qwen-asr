@@ -36,10 +36,24 @@ type Options struct {
 	Toolchain audio.Toolchain
 	// Speech 是可选的语音检测器. 为 nil 时按能量阈值分段.
 	Speech SpeechDetector
-	// Progress 在每段处理完成后调用, done 是已完成段数, failed 是已失败段数.
+	// Progress 在每段处理完成后调用, 报告已完成的分段与音频时长.
 	//
 	// 回调在多个 goroutine 里并发触发, 实现方需自己保证并发安全.
-	Progress func(done, total, failed int)
+	Progress func(ProgressReport)
+}
+
+// ProgressReport 是一次进度更新.
+type ProgressReport struct {
+	// Segments 是已处理完的分段数.
+	Segments int
+	// TotalSegments 是分段总数.
+	TotalSegments int
+	// Failed 是失败分段数.
+	Failed int
+	// Seconds 是已处理的音频时长.
+	Seconds float64
+	// TotalSeconds 是分段覆盖的音频总时长.
+	TotalSeconds float64
 }
 
 // SpeechDetector 检测音频中的语音区间, 时间相对传入样本的起点, 单位秒.
@@ -271,12 +285,26 @@ func (t *Transcriber) transcribeClips(ctx context.Context, clips []audio.Clip, l
 		errs []error
 	)
 
+	// 分段时长并不相等, 进度按音频时长统计才和实际处理量一致.
+	var totalSeconds float64
+	for _, c := range clips {
+		totalSeconds += c.Duration()
+	}
+
 	completed := 0
-	// 在 mu 保护下更新, 进度按实际完成数报告; 具体呈现方式交给调用方.
-	reportProgress := func() {
+	var doneSeconds float64
+	// 在 mu 保护下更新, 进度按实际完成量报告; 具体呈现方式交给调用方.
+	reportProgress := func(c audio.Clip) {
 		completed++
+		doneSeconds += c.Duration()
 		if t.opts.Progress != nil {
-			t.opts.Progress(completed, len(clips), len(errs))
+			t.opts.Progress(ProgressReport{
+				Segments:      completed,
+				TotalSegments: len(clips),
+				Failed:        len(errs),
+				Seconds:       doneSeconds,
+				TotalSeconds:  totalSeconds,
+			})
 		}
 	}
 
@@ -306,14 +334,14 @@ func (t *Transcriber) transcribeClips(ctx context.Context, clips []audio.Clip, l
 				mu.Lock()
 				segments[idx] = Segment{Index: c.Index, Start: c.Start, End: c.End, Failed: true}
 				errs = append(errs, err)
-				reportProgress()
+				reportProgress(c)
 				mu.Unlock()
 				return
 			}
 
 			mu.Lock()
 			segments[idx] = Segment{Index: c.Index, Start: c.Start, End: c.End, Text: text}
-			reportProgress()
+			reportProgress(c)
 			mu.Unlock()
 		}(i, clip)
 	}
