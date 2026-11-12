@@ -17,6 +17,7 @@ import (
 	"github.com/azazo1/qwen-asr/internal/fileout"
 	"github.com/azazo1/qwen-asr/internal/logging"
 	"github.com/azazo1/qwen-asr/internal/model"
+	"github.com/azazo1/qwen-asr/internal/progress"
 	"github.com/azazo1/qwen-asr/internal/prompt"
 	"github.com/azazo1/qwen-asr/internal/transcribe"
 )
@@ -156,8 +157,11 @@ func runTranscribe(ctx context.Context, args []string, stdin io.Reader, stdout, 
 		return ExitUsage
 	}
 
-	// 先检查引擎, 缺失时立即退出, 不进入模型下载或创建数据目录.
-	logger := logging.New(stderr, f.verbose)
+	// 进度条与日志共用 stderr: 日志写入前会先擦掉进度条, 不会互相截断.
+	// 非终端下进度条自动退化为定期输出文本行, 不写控制字符.
+	bar := progress.New(stderr, IsTerminal(os.Stderr))
+	defer bar.Close()
+	logger := logging.New(bar.Writer(), f.verbose)
 	explicitLib := f.llamaLib
 	if explicitLib == "" {
 		explicitLib = os.Getenv(config.EnvLlamaLib)
@@ -242,6 +246,7 @@ func runTranscribe(ctx context.Context, args []string, stdin io.Reader, stdout, 
 		Logger:       logger,
 		Toolchain:    toolchain,
 		Speech:       speech,
+		Progress:     bar.Set,
 	})
 
 	formats, err := fileout.ParseFormats(f.format)

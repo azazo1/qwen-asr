@@ -36,6 +36,10 @@ type Options struct {
 	Toolchain audio.Toolchain
 	// Speech 是可选的语音检测器. 为 nil 时按能量阈值分段.
 	Speech SpeechDetector
+	// Progress 在每段处理完成后调用, done 是已完成段数, failed 是已失败段数.
+	//
+	// 回调在多个 goroutine 里并发触发, 实现方需自己保证并发安全.
+	Progress func(done, total, failed int)
 }
 
 // SpeechDetector 检测音频中的语音区间, 时间相对传入样本的起点, 单位秒.
@@ -267,17 +271,13 @@ func (t *Transcriber) transcribeClips(ctx context.Context, clips []audio.Clip, l
 		errs []error
 	)
 
-	start := time.Now()
 	completed := 0
-	// 在 mu 保护下更新, 并发任务按实际完成数报告进度.
+	// 在 mu 保护下更新, 进度按实际完成数报告; 具体呈现方式交给调用方.
 	reportProgress := func() {
 		completed++
-		log.Info("转录进度",
-			"completed", completed,
-			"total", len(clips),
-			"percent", fmt.Sprintf("%.1f%%", 100*float64(completed)/float64(len(clips))),
-			"failed", len(errs),
-			"elapsed", time.Since(start).Round(time.Millisecond))
+		if t.opts.Progress != nil {
+			t.opts.Progress(completed, len(clips), len(errs))
+		}
 	}
 
 	for i, clip := range clips {
