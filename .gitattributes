@@ -1,0 +1,10 @@
+# 统一使用 LF 行尾.
+#
+# Windows runner 上 core.autocrlf 默认是 true, 检出时会把文本转成 CRLF,
+# 于是 gofmt 会把所有 .go 文件判为未格式化. 在仓库里声明一次即可避免.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.gguf binary
+*.tar.gz binary

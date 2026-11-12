@@ -1,0 +1,23 @@
+# 构建产物.
+dist/
+__pycache__/
+*.pyc
+
+# 临时文件与本地验证用的数据.
+.tmp/
+.agents/
+
+# 模型权重不进仓库 (体积过大, 由下载流程获取).
+*.gguf
+*.part
+*.part.progress
+
+# 密钥与本地配置.
+secrets/
+.env
+.env.*
+
+# 编辑器与系统文件.
+.DS_Store
+.idea/
+.vscode/
