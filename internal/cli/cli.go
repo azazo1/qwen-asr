@@ -235,7 +235,8 @@ func runTranscribe(ctx context.Context, args []string, stdin io.Reader, stdout, 
 		defer closeSpeech()
 	}
 
-	formats, err := fileout.ParseFormats(f.format)
+	// 未显式给 --format 时, -o 的后缀也能决定格式, 例如 -o 字幕.json.
+	formats, err := fileout.FormatsForOutput(f.format, f.output)
 	if err != nil {
 		fmt.Fprintf(stderr, "错误: %v\n", err)
 		return ExitUsage
@@ -313,13 +314,7 @@ func runTranscribe(ctx context.Context, args []string, stdin io.Reader, stdout, 
 // 只有多个输入时才有意义: 单个文件输出无法容纳多个结果,
 // 这种情况要求用户改成目录, 而不是悄悄覆盖或只写其中一个.
 func outputIsFile(output string) bool {
-	if output == "" || output == "-" {
-		return false
-	}
-	if info, err := os.Stat(output); err == nil {
-		return !info.IsDir()
-	}
-	return !strings.HasSuffix(output, string(os.PathSeparator)) && !strings.HasSuffix(output, "/")
+	return !fileout.IsOutputDir(output)
 }
 
 // writeOutputs 按要求的格式写出结果.

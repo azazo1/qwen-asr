@@ -61,6 +61,54 @@ func ParseFormats(raw string) ([]string, error) {
 	return out, nil
 }
 
+// FormattedExt 判断后缀是否对应一种输出格式, 是则返回该格式名.
+//
+// 用于让 -o 的后缀直接决定输出格式: 写 -o 字幕.json 就产出 json,
+// 不必再额外写 --format, 也不会把用户写的后缀悄悄替换成别的格式.
+func FormattedExt(path string) (string, bool) {
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
+	switch ext {
+	case FormatText, FormatSRT, FormatJSON:
+		return ext, true
+	default:
+		return "", false
+	}
+}
+
+// IsOutputDir 判断 -o 的取值是否表示目录而不是单个文件.
+//
+// 空串与 "-" 表示不指定输出文件, 按目录处理;
+// 已存在的目录, 以及以路径分隔符结尾的写法, 也都视为目录.
+func IsOutputDir(outputArg string) bool {
+	if outputArg == "" || outputArg == "-" {
+		return true
+	}
+	if info, err := os.Stat(outputArg); err == nil && info.IsDir() {
+		return true
+	}
+	return strings.HasSuffix(outputArg, string(os.PathSeparator)) || strings.HasSuffix(outputArg, "/")
+}
+
+// FormatsForOutput 决定本次要写哪些格式.
+//
+// 显式的 formatArg 优先. 未指定时, 从 -o 的后缀推断:
+// 目录或未给出时不带格式信息, 交由默认格式处理.
+func FormatsForOutput(formatArg, outputArg string) ([]string, error) {
+	if strings.TrimSpace(formatArg) != "" {
+		return ParseFormats(formatArg)
+	}
+
+	if IsOutputDir(outputArg) {
+		return ParseFormats("")
+	}
+
+	if format, ok := FormattedExt(outputArg); ok {
+		return []string{format}, nil
+	}
+	return nil, fmt.Errorf(
+		"无法从输出路径 %s 推断格式; 请使用 .txt/.srt/.json 后缀, 或用 --format 指定", outputArg)
+}
+
 // ResolvePath 计算某个格式的输出文件路径.
 //
 // outputArg 为空时输出到输入文件旁边; 指向已有目录或以分隔符结尾时视为目录;

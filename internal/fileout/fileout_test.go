@@ -232,3 +232,96 @@ func TestCollectInputsAllDirectory(t *testing.T) {
 		t.Errorf("目录里应收集 2 个音频文件, 实际 %d: %v", len(got), got)
 	}
 }
+
+func TestFormattedExt(t *testing.T) {
+	cases := []struct {
+		path string
+		want string
+		ok   bool
+	}{
+		{"out.srt", "srt", true},
+		{"out.SRT", "srt", true},
+		{"字幕.json", "json", true},
+		{"out.txt", "txt", true},
+		{"out.mp4", "", false},
+		{"out", "", false},
+	}
+	for _, c := range cases {
+		got, ok := FormattedExt(c.path)
+		if ok != c.ok || got != c.want {
+			t.Errorf("FormattedExt(%q) = %q,%v, 预期 %q,%v", c.path, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+func TestIsOutputDir(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "out.srt")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatalf("无法创建: %v", err)
+	}
+
+	cases := []struct {
+		output string
+		want   bool
+	}{
+		{"", true},
+		{"-", true},
+		{dir, true},
+		{dir + string(os.PathSeparator), true},
+		{dir + "/", true},
+		{file, false},
+		{filepath.Join(dir, "new.json"), false},
+	}
+	for _, c := range cases {
+		if got := IsOutputDir(c.output); got != c.want {
+			t.Errorf("IsOutputDir(%q) = %v, 预期 %v", c.output, got, c.want)
+		}
+	}
+}
+
+// -o 的后缀决定格式, 这样不必再写 --format.
+func TestFormatsForOutputInfersFromExtension(t *testing.T) {
+	for _, path := range []string{"out.srt", "out.json", "out.txt", "字幕.SRT"} {
+		got, err := FormatsForOutput("", path)
+		if err != nil {
+			t.Fatalf("FormatsForOutput(%q) 出错: %v", path, err)
+		}
+		want, _ := FormattedExt(path)
+		if len(got) != 1 || got[0] != want {
+			t.Errorf("FormatsForOutput(%q) = %v, 预期 [%s]", path, got, want)
+		}
+	}
+}
+
+// 显式的 --format 优先于后缀.
+func TestFormatsForOutputExplicitWins(t *testing.T) {
+	got, err := FormatsForOutput("txt,json", "out.srt")
+	if err != nil {
+		t.Fatalf("出错: %v", err)
+	}
+	if len(got) != 2 || got[0] != "txt" || got[1] != "json" {
+		t.Errorf("显式格式应优先, 实际 %v", got)
+	}
+}
+
+// 目录或未指定 -o 时保持默认 srt.
+func TestFormatsForOutputDefaultsForDir(t *testing.T) {
+	dir := t.TempDir()
+	for _, output := range []string{"", "-", dir, dir + string(os.PathSeparator)} {
+		got, err := FormatsForOutput("", output)
+		if err != nil {
+			t.Fatalf("FormatsForOutput(%q) 出错: %v", output, err)
+		}
+		if len(got) != 1 || got[0] != FormatSRT {
+			t.Errorf("FormatsForOutput(%q) = %v, 预期 [srt]", output, got)
+		}
+	}
+}
+
+// 后缀无法识别时要报错, 不能悄悄把用户写的后缀换成 srt.
+func TestFormatsForOutputRejectsUnknownExtension(t *testing.T) {
+	if _, err := FormatsForOutput("", "out.xyz"); err == nil {
+		t.Error("无法识别的后缀应当报错")
+	}
+}

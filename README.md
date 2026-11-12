@@ -38,6 +38,9 @@ qwen-asr -i 录音.mp3
 # 指定模型与输出格式
 qwen-asr -i 视频.mp4 --model 1.7b --format txt,srt -o ./字幕
 
+# -o 的后缀直接决定格式, 不必再写 --format
+qwen-asr -i 录音.mp3 -o 字幕.json
+
 # 一次给多个文件, 也可以用通配符, 会按顺序逐个转录
 qwen-asr *.mp4
 
@@ -65,8 +68,8 @@ qwen-asr doctor
 | 选项 | 说明 |
 | --- | --- |
 | `-i, --input` | 输入文件或目录, 可重复或用多个位置参数 |
-| `-o, --output` | 输出路径, 默认与输入同目录 |
-| `--format` | `txt,srt,json` 逗号分隔, 默认 `srt`; 显式选择 `txt` 且不指定 `-o` 时打印到 stdout |
+| `-o, --output` | 输出路径, 可以是目录或带格式后缀的文件名, 默认与输入同目录 |
+| `--format` | `txt,srt,json` 逗号分隔, 默认 `srt`; 未指定时由 `-o` 后缀决定; 显式选择 `txt` 且不指定 `-o` 时打印到 stdout |
 | `-j, --jobs` | 并发转录段数, 默认 4 |
 | `--chunk-seconds` | 单段时长上限, 默认 60 秒 |
 | `--model` | `0.6b` / `1.7b` / 本地 gguf 路径 |
